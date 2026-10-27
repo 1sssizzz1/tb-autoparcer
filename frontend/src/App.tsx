@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDownUp, ExternalLink, Gem, LoaderCircle, RefreshCw, Search, ShieldCheck } from "lucide-react";
+import { ArrowDownUp, ExternalLink, Gem, LoaderCircle, RefreshCw, Search, ShieldCheck, Sparkles } from "lucide-react";
 
 type Listing = {
   listing_id: string;
@@ -23,6 +23,8 @@ type MarketResponse = {
   retry_after_seconds?: number;
 };
 
+type GemTone = "blue" | "green" | "gold" | "orange" | "purple" | "red" | "pink" | "grey";
+
 const REFRESH_INTERVAL = 5 * 60_000;
 const CURRENCY_LABELS: Record<string, string> = {
   RUB: "₽ Рубли",
@@ -30,11 +32,34 @@ const CURRENCY_LABELS: Record<string, string> = {
   EUR: "€ Евро",
 };
 
+function getGemTone(gem: string): GemTone {
+  const name = gem.toLocaleLowerCase("en");
+  if (name === "не указано" || /grey|gray|black/.test(name)) return "grey";
+  if (/blue|ships in the night/.test(name)) return "blue";
+  if (/green|ground|tnim s'nnam/.test(name)) return "green";
+  if (/gold|beige|earth|creator's light/.test(name)) return "gold";
+  if (/orange|summer warmth|explosive burst/.test(name)) return "orange";
+  if (/red|rubiline|vermillion|renewal/.test(name)) return "red";
+  if (/plushy shag/.test(name)) return "pink";
+  if (/purple|shade|dungeon doom/.test(name)) return "purple";
+  return "grey";
+}
+
+function formatOfferCount(count: number): string {
+  const lastTwo = count % 100;
+  const last = count % 10;
+  if (lastTwo >= 11 && lastTwo <= 14) return `${count} лотов`;
+  if (last === 1) return `${count} лот`;
+  if (last >= 2 && last <= 4) return `${count} лота`;
+  return `${count} лотов`;
+}
+
 function App() {
   const [data, setData] = useState<MarketResponse | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState("");
+  const [selectedGem, setSelectedGem] = useState("");
   const [sortAscending, setSortAscending] = useState(true);
   const [currency, setCurrency] = useState("RUB");
   const [refreshInterval, setRefreshInterval] = useState(REFRESH_INTERVAL);
@@ -106,11 +131,13 @@ function App() {
       ? currency
       : data?.available_currencies[0] ?? currency;
     return [...(data?.listings ?? [])]
-      .filter((item) => `${item.name} ${item.gem}`.toLocaleLowerCase("ru").includes(normalizedFilter))
+      .filter((item) =>
+        (!selectedGem || item.gem === selectedGem) &&
+        `${item.name} ${item.gem}`.toLocaleLowerCase("ru").includes(normalizedFilter))
       .sort((a, b) => sortAscending
         ? (a.price_values[activeCurrency] ?? 0) - (b.price_values[activeCurrency] ?? 0)
         : (b.price_values[activeCurrency] ?? 0) - (a.price_values[activeCurrency] ?? 0));
-  }, [data, filter, sortAscending, currency]);
+  }, [data, filter, selectedGem, sortAscending, currency]);
 
   const availableCurrencies = data?.available_currencies ?? [];
   const activeCurrency = availableCurrencies.includes(currency) ? currency : availableCurrencies[0] ?? currency;
@@ -125,62 +152,122 @@ function App() {
     }).format(value / 100);
   };
   const uniqueGems = new Set((data?.listings ?? []).map((item) => item.gem).filter((gem) => gem !== "Не указано")).size;
+  const gemOptions = [...new Set((data?.listings ?? []).map((item) => item.gem))]
+    .sort((a, b) => a.localeCompare(b, "ru"));
+  const gemSummaries = useMemo(() => {
+    const summaries = new Map<string, { count: number; lowestPrice?: number }>();
+    for (const item of data?.listings ?? []) {
+      const summary = summaries.get(item.gem) ?? { count: 0 };
+      summary.count += 1;
+      const price = item.price_values[activeCurrency];
+      if (price !== undefined && (summary.lowestPrice === undefined || price < summary.lowestPrice)) {
+        summary.lowestPrice = price;
+      }
+      summaries.set(item.gem, summary);
+    }
+    return [...summaries.entries()]
+      .map(([gem, summary]) => ({ gem, ...summary }))
+      .sort((a, b) => {
+        if (a.gem === "Не указано") return 1;
+        if (b.gem === "Не указано") return -1;
+        return (a.lowestPrice ?? Number.MAX_SAFE_INTEGER) - (b.lowestPrice ?? Number.MAX_SAFE_INTEGER);
+      });
+  }, [data, activeCurrency]);
   const updatedAt = data?.updated_at
     ? new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(data.updated_at))
     : "—";
 
+  const selectGem = (gem: string) => {
+    setSelectedGem((current) => current === gem ? "" : gem);
+    setFilter("");
+    window.setTimeout(() => document.getElementById("listings")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+  };
+
   return (
-    <main className="shell">
+    <main className="catalog-shell">
       <header className="topbar">
         <a className="brand" href="#" aria-label="TB Market Watch">
           <span className="brand-mark"><Gem size={19} /></span>
           <span>TB <b>MARKET WATCH</b></span>
         </a>
-        <div className={`live-badge ${data?.stale || (data && !data.complete) ? "stale-badge" : ""}`}><span /> {data?.stale ? "CACHED DATA" : data && !data.complete ? "PARTIAL DATA" : "LIVE MARKET"}</div>
+        <nav className="catalog-nav" aria-label="Навигация">
+          <a className="nav-active" href="#catalog">Каталог</a>
+          <a href="#catalog">Terrorblade <span>Arcana</span></a>
+        </nav>
+        <div className={`live-badge ${data?.stale || (data && !data.complete) ? "stale-badge" : ""}`}><span /> {data?.stale ? "КЭШ" : data && !data.complete ? "ЧАСТИЧНЫЕ ДАННЫЕ" : "STEAM MARKET"}</div>
       </header>
 
-      <section className="hero">
+      <section className="catalog-hero">
         <div className="hero-copy">
-          <div className="eyebrow"><span className="eyebrow-line" /> DOTA 2 / STEAM COMMUNITY MARKET</div>
+          <div className="eyebrow"><span className="eyebrow-line" /> DOTA 2 <span className="crumb-slash">/</span> КАТАЛОГ ГЕРОЯ</div>
           <h1>Аркана <span>Террорблейда</span></h1>
-          <p>Цены в выбранной валюте и призматический самоцвет каждого лота.</p>
+          <p>Fractal Horns of Inner Abysm — предложения Steam с ценами и призматическими самоцветами.</p>
+          <div className="hero-pills">
+            <span><Sparkles size={14} /> ARCANA</span>
+            <span><Gem size={14} /> {data?.total_count ?? "—"} предложений</span>
+          </div>
         </div>
         <div className="hero-item" aria-hidden="true">
           <div className="orb orb-one" />
           <div className="orb orb-two" />
-          <div className="item-emblem"><Gem size={58} strokeWidth={1.2} /></div>
-          <div className="item-caption">DEMON EATER <span>ARCANA</span></div>
+          <div className="hero-art-glow" />
+          <div className="item-emblem"><Gem size={64} strokeWidth={1.1} /></div>
+          <div className="item-caption">FRACTAL HORNS <span>ARCANA</span></div>
         </div>
       </section>
 
-      <section className="stats" aria-label="Сводка рынка">
-        <article className="stat-card">
-          <span className="stat-label">АКТИВНЫЕ ЛОТЫ</span>
-          <strong>{data?.total_count ?? "—"}</strong>
-          <span className="stat-note">Fractal Horns of Inner Abysm</span>
-        </article>
-        <article className="stat-card">
-          <span className="stat-label">РАСПОЗНАНО САМОЦВЕТОВ</span>
-          <strong>{data ? uniqueGems : "—"}</strong>
-          <span className="stat-note">в публичных данных Steam</span>
-        </article>
-        <article className="stat-card stat-update">
-          <span className="stat-label">ПОСЛЕДНЕЕ ОБНОВЛЕНИЕ</span>
-          <strong>{updatedAt}</strong>
-          <span className="stat-note"><span className="status-dot" /> Автообновление каждые 5 минут</span>
-        </article>
-      </section>
-
-      <section className="market-panel">
+      <section className="catalog-section gem-overview" id="catalog">
         <div className="panel-heading">
           <div>
-            <div className="section-kicker">ТОРГОВАЯ ПЛОЩАДКА</div>
-            <h2>Предложения <span>{data?.total_count ?? 0}</span></h2>
+            <div className="section-kicker">ВЫБЕРИТЕ ПРИЗМАТИЧЕСКИЙ САМОЦВЕТ</div>
+            <h2>Самоцветы <span>{gemSummaries.length} категорий · цены от минимума на рынке</span></h2>
           </div>
-          <button className="refresh-button" onClick={() => void refresh(true)} disabled={loading}>
-            {loading ? <LoaderCircle className="spin" size={16} /> : <RefreshCw size={16} />}
-            {loading ? "Обновление" : "Обновить"}
+          <div className="catalog-meta">
+            <span className="last-updated">Обновлено: {updatedAt}</span>
+            <button className="refresh-button" onClick={() => void refresh(true)} disabled={loading}>
+              {loading ? <LoaderCircle className="spin" size={16} /> : <RefreshCw size={16} />}
+              {loading ? "Обновление" : "Обновить"}
+            </button>
+          </div>
+        </div>
+
+        <div className="gem-category-grid">
+          {gemSummaries.map(({ gem, count, lowestPrice }) => (
+            <button
+              className={`gem-category-card gem-tone-${getGemTone(gem)} ${selectedGem === gem ? "selected" : ""}`}
+              key={gem}
+              type="button"
+              aria-pressed={selectedGem === gem}
+              onClick={() => selectGem(gem)}
+            >
+              <span className="category-gem-icon"><Gem size={27} strokeWidth={1.6} /></span>
+              <span className="category-gem-name">{gem}</span>
+              <span className="category-market">
+                <span className="category-price">{lowestPrice === undefined ? "—" : `от ${formatPrice({ [activeCurrency]: lowestPrice })}`}</span>
+                <span className="category-count">{formatOfferCount(count)}</span>
+              </span>
+              <span className="category-arrow" aria-hidden="true">↗</span>
+            </button>
+          ))}
+          {gemSummaries.length === 0 && !loading && (
+            <div className="empty-state">{data ? "Самоцветы не найдены." : "Загружаем категории самоцветов…"}</div>
+          )}
+        </div>
+        <footer className="panel-footer">
+          <span>{selectedGem ? `Выбран самоцвет: ${selectedGem}` : "Нажмите на карточку, чтобы посмотреть лоты с этим самоцветом"}</span>
+          <button className="clear-gem-button" type="button" onClick={() => { setSelectedGem(""); setFilter(""); }}>
+            Все предложения
           </button>
+        </footer>
+      </section>
+
+      <section className="catalog-section listings-section" id="listings">
+        <div className="panel-heading">
+          <div>
+            <div className="section-kicker">{selectedGem ? `САМОЦВЕТ: ${selectedGem.toLocaleUpperCase("ru")}` : "АКТУАЛЬНЫЕ ПРЕДЛОЖЕНИЯ"}</div>
+            <h2>Лоты <span>{listings.length} предложений</span></h2>
+          </div>
+          <span className="last-updated">{data ? `Всего активных предложений: ${data.total_count}` : "Загружаем рынок…"}</span>
         </div>
 
         <div className="toolbar">
@@ -193,22 +280,37 @@ function App() {
               onChange={(event) => setFilter(event.target.value)}
             />
           </label>
-          <button className="sort-button" onClick={() => setSortAscending((current) => !current)}>
-            <ArrowDownUp size={15} /> Цена {sortAscending ? "↑" : "↓"}
-          </button>
-          <label className="currency-select">
-            <span>Валюта</span>
-            <select
-              aria-label="Валюта отображения цен"
-              value={activeCurrency}
-              onChange={(event) => setCurrency(event.target.value)}
-              disabled={availableCurrencies.length < 2}
-            >
-              {(availableCurrencies.length ? availableCurrencies : ["RUB"]).map((code) => (
-                <option key={code} value={code}>{CURRENCY_LABELS[code] ?? code}</option>
-              ))}
-            </select>
-          </label>
+          <div className="filter-controls">
+            <label className="catalog-select">
+              <span>Самоцвет</span>
+              <select
+                aria-label="Фильтр по самоцвету"
+                value={selectedGem}
+                onChange={(event) => setSelectedGem(event.target.value)}
+              >
+                <option value="">Все самоцветы</option>
+                {gemOptions.map((gem) => (
+                  <option key={gem} value={gem}>{gem}</option>
+                ))}
+              </select>
+            </label>
+            <label className="catalog-select">
+              <span>Валюта</span>
+              <select
+                aria-label="Валюта отображения цен"
+                value={activeCurrency}
+                onChange={(event) => setCurrency(event.target.value)}
+                disabled={availableCurrencies.length < 2}
+              >
+                {(availableCurrencies.length ? availableCurrencies : ["RUB"]).map((code) => (
+                  <option key={code} value={code}>{CURRENCY_LABELS[code] ?? code}</option>
+                ))}
+              </select>
+            </label>
+            <button className="sort-button" onClick={() => setSortAscending((current) => !current)}>
+              <ArrowDownUp size={15} /> Цена {sortAscending ? "↑" : "↓"}
+            </button>
+          </div>
         </div>
 
         {error && <div className="error-banner" role="alert">
@@ -220,41 +322,48 @@ function App() {
           {data.retry_after_seconds ? ` Следующая попытка примерно через ${Math.ceil(data.retry_after_seconds / 60)} мин.` : ""}
         </div>}
 
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr><th>ПРЕДМЕТ</th><th>ПРИЗМАТИЧЕСКИЙ САМОЦВЕТ</th><th>В НАЛИЧИИ</th><th>ЦЕНА</th><th /></tr>
-            </thead>
-            <tbody>
-              {listings.map((item, index) => (
-                <tr key={item.listing_id || `${item.market_hash_name}-${index}`}>
-                  <td>
-                    <div className="item-cell">
-                      <div className={`item-icon hue-${index % 5}`}><Gem size={18} /></div>
-                      <div><strong>{item.name || "Fractal Horns of Inner Abysm"}</strong><span>Лот {item.listing_id}</span></div>
-                    </div>
-                  </td>
-                  <td><span className={`gem-tag ${item.gem === "Не указано" ? "muted" : ""}`}><span className="gem-dot" />{item.gem}</span></td>
-                  <td className="quantity">{item.quantity}</td>
-                  <td><strong className="price">{formatPrice(item.price_values)}</strong></td>
-                  <td><a className="open-link" href={item.url} target="_blank" rel="noreferrer" title={`Открыть предложение ${item.listing_id} в Steam`} aria-label={`Перейти к лоту ${item.listing_id} в Steam Market`}>Страница в Steam <ExternalLink size={14} /></a></td>
-                </tr>
-              ))}
-              {listings.length === 0 && !loading && !error && (
-                <tr><td className="empty-state" colSpan={5}>{data ? "Лоты не найдены. Попробуйте изменить поиск." : "Загрузка лотов Steam Market…"}</td></tr>
-              )}
-              {loading && !data && (
-                <tr><td className="empty-state" colSpan={5}><LoaderCircle className="spin" size={18} /> Подключаемся к Steam Market…</td></tr>
-              )}
-            </tbody>
-          </table>
+        <div className="catalog-grid">
+          {listings.map((item, index) => (
+            <article className="market-card" key={item.listing_id || `${item.market_hash_name}-${index}`}>
+              <div className={`card-art gem-tone-${getGemTone(item.gem)}`} aria-hidden="true">
+                <div className="art-aura" />
+                <div className="art-orbit art-orbit-one" />
+                <div className="art-orbit art-orbit-two" />
+                <div className="art-gem"><Gem size={66} strokeWidth={1.1} /></div>
+                <span className="art-label">TERRORBLADE <b>ARCANA</b></span>
+                <span className="art-sequence">{String(index + 1).padStart(2, "0")}</span>
+              </div>
+              <div className="card-content">
+                <div className="card-title-row">
+                  <div>
+                    <span className="card-kicker">FRACTAL HORNS OF</span>
+                    <h3>{item.name || "Inner Abysm"}</h3>
+                  </div>
+                  <span className={`gem-tag ${item.gem === "Не указано" ? "muted" : ""}`}><span className="gem-dot" />{item.gem}</span>
+                </div>
+                <div className="card-bottom">
+                  <div className="card-price"><span>ЦЕНА</span><strong>{formatPrice(item.price_values)}</strong></div>
+                  <a className="open-link" href={item.url} target="_blank" rel="noreferrer" title={`Открыть предложение ${item.listing_id} в Steam`} aria-label={`Перейти к лоту ${item.listing_id} в Steam Market`}>
+                    Steam <ExternalLink size={14} />
+                  </a>
+                </div>
+                <div className="card-id"><span>ЛОТ</span> {item.listing_id}</div>
+              </div>
+            </article>
+          ))}
+          {listings.length === 0 && !loading && !error && (
+            <div className="empty-state">{data ? "Предложения не найдены. Измените фильтры." : "Лоты не найдены."}</div>
+          )}
+          {loading && !data && (
+            <div className="empty-state"><LoaderCircle className="spin" size={18} /> Подключаемся к Steam Market…</div>
+          )}
         </div>
         <footer className="panel-footer">
-          <span>Загружено лотов: {data?.listings.length ?? 0} из {data?.total_count ?? 0}</span>
+          <span>Показано {listings.length} из {data?.listings.length ?? 0} загруженных лотов · {uniqueGems} разных самоцветов</span>
           <span className="privacy"><ShieldCheck size={14} /> Только публичные данные Steam</span>
         </footer>
       </section>
-      <p className="disclaimer">Пересчёт в евро, доллары и рубли выполняется по последнему доступному курсу ЦБ. Если курсы временно недоступны, остаётся валюта исходной цены Steam. Ссылка открывает страницу Steam с выбранным предложением по его ID.</p>
+      <p className="disclaimer">Пересчёт в евро, доллары и рубли выполняется по последнему доступному курсу ЦБ. Ссылка на карточке открывает выбранное предложение в Steam Market.</p>
     </main>
   );
 }
