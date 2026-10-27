@@ -1,0 +1,14 @@
+services:
+  tb-market-watch:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tb-market-watch
+    ports:
+      - "8080:8080"
+    volumes:
+      - market-data:/data
+    restart: unless-stopped
+
+volumes:
+  market-data:
