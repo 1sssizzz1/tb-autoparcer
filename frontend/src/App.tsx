@@ -2,11 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDownUp, ExternalLink, Gem, LoaderCircle, RefreshCw, Search, ShieldCheck } from "lucide-react";
 
 type Listing = {
+  listing_id: string;
+  page_start: number;
   name: string;
   market_hash_name: string;
   gem: string;
-  price_text: string;
-  price_cents: number;
+  price_values: Record<string, number>;
   quantity: number;
   url: string;
 };
@@ -15,12 +16,19 @@ type MarketResponse = {
   listings: Listing[];
   total_count: number;
   updated_at: string;
+  complete: boolean;
+  available_currencies: string[];
   stale?: boolean;
   warning?: string;
   retry_after_seconds?: number;
 };
 
-const REFRESH_INTERVAL = 60_000;
+const REFRESH_INTERVAL = 5 * 60_000;
+const CURRENCY_LABELS: Record<string, string> = {
+  RUB: "₽ Рубли",
+  USD: "$ Доллары",
+  EUR: "€ Евро",
+};
 
 function App() {
   const [data, setData] = useState<MarketResponse | null>(null);
@@ -28,6 +36,7 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState("");
   const [sortAscending, setSortAscending] = useState(true);
+  const [currency, setCurrency] = useState("RUB");
   const [refreshInterval, setRefreshInterval] = useState(REFRESH_INTERVAL);
   const refreshIntervalRef = useRef(REFRESH_INTERVAL);
 
@@ -93,11 +102,28 @@ function App() {
 
   const listings = useMemo(() => {
     const normalizedFilter = filter.trim().toLocaleLowerCase("ru");
+    const activeCurrency = data?.available_currencies.includes(currency)
+      ? currency
+      : data?.available_currencies[0] ?? currency;
     return [...(data?.listings ?? [])]
       .filter((item) => `${item.name} ${item.gem}`.toLocaleLowerCase("ru").includes(normalizedFilter))
-      .sort((a, b) => sortAscending ? a.price_cents - b.price_cents : b.price_cents - a.price_cents);
-  }, [data, filter, sortAscending]);
+      .sort((a, b) => sortAscending
+        ? (a.price_values[activeCurrency] ?? 0) - (b.price_values[activeCurrency] ?? 0)
+        : (b.price_values[activeCurrency] ?? 0) - (a.price_values[activeCurrency] ?? 0));
+  }, [data, filter, sortAscending, currency]);
 
+  const availableCurrencies = data?.available_currencies ?? [];
+  const activeCurrency = availableCurrencies.includes(currency) ? currency : availableCurrencies[0] ?? currency;
+  const formatPrice = (values: Record<string, number>) => {
+    const value = values[activeCurrency];
+    if (value === undefined) return "—";
+    return new Intl.NumberFormat("ru-RU", {
+      style: "currency",
+      currency: activeCurrency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value / 100);
+  };
   const uniqueGems = new Set((data?.listings ?? []).map((item) => item.gem).filter((gem) => gem !== "Не указано")).size;
   const updatedAt = data?.updated_at
     ? new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(data.updated_at))
@@ -110,14 +136,14 @@ function App() {
           <span className="brand-mark"><Gem size={19} /></span>
           <span>TB <b>MARKET WATCH</b></span>
         </a>
-        <div className={`live-badge ${data?.stale ? "stale-badge" : ""}`}><span /> {data?.stale ? "CACHED DATA" : "LIVE MARKET"}</div>
+        <div className={`live-badge ${data?.stale || (data && !data.complete) ? "stale-badge" : ""}`}><span /> {data?.stale ? "CACHED DATA" : data && !data.complete ? "PARTIAL DATA" : "LIVE MARKET"}</div>
       </header>
 
       <section className="hero">
         <div className="hero-copy">
           <div className="eyebrow"><span className="eyebrow-line" /> DOTA 2 / STEAM COMMUNITY MARKET</div>
           <h1>Аркана <span>Террорблейда</span></h1>
-          <p>Цены и призматический самоцвет арканы Fractal Horns of Inner Abysm, если Steam указывает его в данных лота.</p>
+          <p>Цены в выбранной валюте и призматический самоцвет каждого лота.</p>
         </div>
         <div className="hero-item" aria-hidden="true">
           <div className="orb orb-one" />
@@ -141,7 +167,7 @@ function App() {
         <article className="stat-card stat-update">
           <span className="stat-label">ПОСЛЕДНЕЕ ОБНОВЛЕНИЕ</span>
           <strong>{updatedAt}</strong>
-          <span className="stat-note"><span className="status-dot" /> Автообновление каждую минуту</span>
+          <span className="stat-note"><span className="status-dot" /> Автообновление каждые 5 минут</span>
         </article>
       </section>
 
@@ -170,13 +196,29 @@ function App() {
           <button className="sort-button" onClick={() => setSortAscending((current) => !current)}>
             <ArrowDownUp size={15} /> Цена {sortAscending ? "↑" : "↓"}
           </button>
+          <label className="currency-select">
+            <span>Валюта</span>
+            <select
+              aria-label="Валюта отображения цен"
+              value={activeCurrency}
+              onChange={(event) => setCurrency(event.target.value)}
+              disabled={availableCurrencies.length < 2}
+            >
+              {(availableCurrencies.length ? availableCurrencies : ["RUB"]).map((code) => (
+                <option key={code} value={code}>{CURRENCY_LABELS[code] ?? code}</option>
+              ))}
+            </select>
+          </label>
         </div>
 
         {error && <div className="error-banner" role="alert">
           {error}
           {refreshInterval > REFRESH_INTERVAL && ` Следующая попытка примерно через ${Math.ceil(refreshInterval / 60_000)} мин.`}
         </div>}
-        {data?.warning && <div className="warning-banner" role="status">{data.warning} Следующая попытка примерно через {Math.ceil((data.retry_after_seconds ?? 60) / 60)} мин.</div>}
+        {data?.warning && <div className="warning-banner" role="status">
+          {data.warning}
+          {data.retry_after_seconds ? ` Следующая попытка примерно через ${Math.ceil(data.retry_after_seconds / 60)} мин.` : ""}
+        </div>}
 
         <div className="table-wrap">
           <table>
@@ -185,17 +227,17 @@ function App() {
             </thead>
             <tbody>
               {listings.map((item, index) => (
-                <tr key={`${item.market_hash_name}-${index}`}>
+                <tr key={item.listing_id || `${item.market_hash_name}-${index}`}>
                   <td>
                     <div className="item-cell">
                       <div className={`item-icon hue-${index % 5}`}><Gem size={18} /></div>
-                      <div><strong>{item.name || "Fractal Horns of Inner Abysm"}</strong><span>Dota 2 · Аркана</span></div>
+                      <div><strong>{item.name || "Fractal Horns of Inner Abysm"}</strong><span>Лот {item.listing_id}</span></div>
                     </div>
                   </td>
                   <td><span className={`gem-tag ${item.gem === "Не указано" ? "muted" : ""}`}><span className="gem-dot" />{item.gem}</span></td>
                   <td className="quantity">{item.quantity}</td>
-                  <td><strong className="price">{item.price_text || "—"}</strong></td>
-                  <td><a className="open-link" href={item.url} target="_blank" rel="noreferrer" aria-label={`Открыть ${item.name} в Steam Market`}><ExternalLink size={16} /></a></td>
+                  <td><strong className="price">{formatPrice(item.price_values)}</strong></td>
+                  <td><a className="open-link" href={item.url} target="_blank" rel="noreferrer" title={`Открыть предложение ${item.listing_id} в Steam`} aria-label={`Перейти к лоту ${item.listing_id} в Steam Market`}>Страница в Steam <ExternalLink size={14} /></a></td>
                 </tr>
               ))}
               {listings.length === 0 && !loading && !error && (
@@ -208,11 +250,11 @@ function App() {
           </table>
         </div>
         <footer className="panel-footer">
-          <span>Показано предметов: {listings.length}</span>
+          <span>Загружено лотов: {data?.listings.length ?? 0} из {data?.total_count ?? 0}</span>
           <span className="privacy"><ShieldCheck size={14} /> Только публичные данные Steam</span>
         </footer>
       </section>
-      <p className="disclaimer">Steam Market объединяет аркану по названию и может не передавать сведения о самоцвете. Цены и наличие могут измениться.</p>
+      <p className="disclaimer">Пересчёт в евро, доллары и рубли выполняется по последнему доступному курсу ЦБ. Если курсы временно недоступны, остаётся валюта исходной цены Steam. Ссылка открывает страницу Steam с выбранным предложением по его ID.</p>
     </main>
   );
 }

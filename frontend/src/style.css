@@ -53,7 +53,10 @@ h2 span { color: #7e8795; font: 500 13px "DM Mono", monospace; margin-left: 6px;
 .refresh-button, .sort-button { display: flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid #333c4b; background: #171e29; padding: 9px 13px; border-radius: 6px; color: #d3d6df; cursor: pointer; font-size: 12px; transition: .15s ease; }
 .refresh-button:hover, .sort-button:hover { border-color: #9c5fc4; color: #e9c9ff; }
 .refresh-button:disabled { opacity: .7; cursor: wait; }
-.toolbar { padding: 0 23px 16px; display: flex; gap: 10px; }
+.toolbar { padding: 0 23px 16px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.currency-select { display: flex; align-items: center; gap: 8px; color: #858d9d; font-size: 11px; white-space: nowrap; }
+.currency-select select { min-height: 38px; border: 1px solid #333c4b; border-radius: 6px; padding: 0 10px; color: #d3d6df; background: #171e29; font-size: 12px; }
+.currency-select select:disabled { opacity: .65; }
 .searchbox { display: flex; align-items: center; flex: 1; height: 38px; gap: 9px; padding: 0 11px; color: #788292; background: #0c1119; border: 1px solid #252d39; border-radius: 6px; }
 .searchbox input { width: 100%; color: #e2e5eb; border: 0; outline: 0; background: transparent; font-size: 12px; }
 .searchbox input::placeholder { color: #717a88; }
@@ -82,7 +85,7 @@ tbody tr:hover { background: #ffffff06; }
 .muted .gem-dot { background: #87909f; box-shadow: none; }
 .quantity { color: #a6adba; font: 12px "DM Mono", monospace; }
 .price { color: #e4d7f0; font: 600 13px Manrope, sans-serif; }
-.open-link { display: grid; place-items: center; color: #8992a1; padding: 5px; }
+.open-link { display: inline-flex; align-items: center; gap: 5px; color: #a78abd; padding: 5px; font-size: 10px; text-decoration: none; }
 .open-link:hover { color: #d6a1f5; }
 .empty-state { text-align: center; color: #838b99; padding: 32px; }
 .empty-state svg { vertical-align: middle; margin-right: 7px; }
@@ -104,6 +107,8 @@ tbody tr:hover { background: #ffffff06; }
   .stat-label { font-size: 8px; }
   .panel-heading { padding: 18px 15px 14px; }
   .toolbar { padding: 0 15px 13px; }
+  .currency-select { gap: 5px; font-size: 10px; }
+  .currency-select select { max-width: 106px; padding: 0 5px; font-size: 10px; }
   .searchbox kbd { display: none; }
   th, td { padding-left: 12px; padding-right: 12px; }
   th:first-child, td:first-child { padding-left: 15px; }
