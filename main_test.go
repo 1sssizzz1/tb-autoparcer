@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -77,6 +79,126 @@ func TestParsePriceCents(t *testing.T) {
 	}
 }
 
+func TestFetchDotaListingsParsesTerrorbladeArcanaPagesAndGems(t *testing.T) {
+	var pageRequests, gemRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/ajax/"):
+			pageRequests.Add(1)
+			if r.Header.Get("X-Requested-With") != "XMLHttpRequest" {
+				t.Errorf("X-Requested-With = %q, want XMLHttpRequest", r.Header.Get("X-Requested-With"))
+			}
+			if !strings.Contains(r.URL.Path, "/Arcana/all/109/") || !strings.HasSuffix(r.URL.Path, "/all/109") {
+				t.Errorf("unexpected market query path %q", r.URL.Path)
+			}
+			switch {
+			case strings.Contains(r.URL.Path, "/1/56/"):
+				_, _ = w.Write([]byte(`[[
+					["342651391","3361758890","Fractal Horns of Inner Abysm",2950,"D2D2D2",false,"2 950<small></small>",[],"Fractal Horns of Inner Abysm"],
+					["342651391","1485590338","Fractal Horns of Inner Abysm",6000,"D2D2D2",false,"6 000<small></small>",[],"Fractal Horns of Inner Abysm"],
+					["999","999","Demon Eater",1000,"D2D2D2",false,"1 000<small></small>",[],"Demon Eater"]
+				],2]`))
+			case strings.Contains(r.URL.Path, "/2/56/"):
+				_, _ = w.Write([]byte(`[[
+					["342651391","1676325262","Fractal Horns of Inner Abysm",4100,"D2D2D2",false,"4 100<small></small>",[],"Fractal Horns of Inner Abysm"]
+				],2]`))
+			default:
+				t.Errorf("unexpected Dota Market page path %q", r.URL.Path)
+				http.NotFound(w, r)
+			}
+		case strings.HasPrefix(r.URL.Path, "/item/"):
+			gemRequests.Add(1)
+			switch {
+			case strings.Contains(r.URL.Path, "3361758890"):
+				_, _ = w.Write([]byte(`<p>Reflection&#39;s ShadeПризматический самоцвет</p>`))
+			case strings.Contains(r.URL.Path, "1485590338"):
+				_, _ = w.Write([]byte(`<p>Miasmatic GreyPrismatic Gem</p>`))
+			case strings.Contains(r.URL.Path, "1676325262"):
+				_, _ = w.Write([]byte(`<p>Tnim S&#39;nnamПризматический самоцвет</p>`))
+			default:
+				http.NotFound(w, r)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := newMarketClient()
+	client.dotaURL = server.URL
+	client.ratesURL = server.URL + "/rates"
+	listings, err := client.fetchDotaListings(t.Context())
+	if err != nil {
+		t.Fatalf("fetchDotaListings() error = %v", err)
+	}
+	if pageRequests.Load() != 2 || gemRequests.Load() != 3 {
+		t.Fatalf("requests = pages:%d gems:%d, want pages:2 gems:3", pageRequests.Load(), gemRequests.Load())
+	}
+	if len(listings) != 3 {
+		t.Fatalf("listings = %d, want 3", len(listings))
+	}
+	want := []struct {
+		id, gem string
+		price   int64
+	}{
+		{"342651391-3361758890", "Reflection's Shade", 295000},
+		{"342651391-1485590338", "Miasmatic Grey", 600000},
+		{"342651391-1676325262", "Tnim S'nnam", 410000},
+	}
+	for i, expected := range want {
+		actual := listings[i]
+		if actual.Source != "market.dota2.net" || actual.SourceItemID != expected.id ||
+			actual.Gem != expected.gem || actual.PriceValues["RUB"] != expected.price {
+			t.Errorf("listing[%d] = %+v, want source/item/gem/RUB = market.dota2.net/%s/%q/%d",
+				i, actual, expected.id, expected.gem, expected.price)
+		}
+		if !strings.HasPrefix(actual.URL, server.URL+"/item/") {
+			t.Errorf("listing[%d] URL = %q, want Dota Market item URL", i, actual.URL)
+		}
+	}
+}
+
+func TestIncompleteSourceRefreshDoesNotReplaceCompleteCache(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/listing":
+			http.SetCookie(w, &http.Cookie{Name: "sessionid", Value: "anonymous", Path: "/"})
+			_, _ = w.Write([]byte("listing page"))
+		case "/rates":
+			_, _ = w.Write([]byte(`{"Valute":{"EUR":{"Nominal":1,"Value":100},"USD":{"Nominal":1,"Value":90}}}`))
+		case "/market/actions":
+			_, _ = w.Write([]byte(`{"data":{"more":false,"start":0,"total_count":1,"listings":[` +
+				fixtureListing("1001", 2984, 447, "$34.31", "Reflection&#39;s Shade", "Призматический самоцвет") +
+				`]}}`))
+		default:
+			http.Error(w, "Dota Market unavailable", http.StatusServiceUnavailable)
+		}
+	}))
+	defer server.Close()
+
+	client := newMarketClient()
+	client.marketURL = server.URL + "/market/actions"
+	client.pageURL = server.URL + "/listing"
+	client.dotaURL = server.URL + "/dota"
+	client.ratesURL = server.URL + "/rates"
+	client.statePath = ""
+	client.cache = &cacheEntry{
+		response: priceResponse{TotalCount: 99, Complete: true},
+		expires:  time.Now().Add(-time.Second),
+	}
+
+	got, err := client.getListings(t.Context(), false)
+	if err != nil {
+		t.Fatalf("getListings() error = %v", err)
+	}
+	if got.Complete || len(got.Listings) != 1 || got.SteamTotalCount != 1 {
+		t.Fatalf("unexpected partial response: %+v", got)
+	}
+	if client.cache.response.TotalCount != 99 {
+		t.Fatalf("cached total_count = %d, want the previous complete value 99", client.cache.response.TotalCount)
+	}
+}
+
 func TestFetchListingsLoadsPagesAndParsesIndividualOffers(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -133,6 +255,7 @@ func TestFetchListingsLoadsPagesAndParsesIndividualOffers(t *testing.T) {
 	client := newMarketClient()
 	client.marketURL = server.URL + "/market/actions"
 	client.pageURL = server.URL + "/listing"
+	client.dotaURL = ""
 	client.ratesURL = server.URL + "/rates"
 	client.statePath = ""
 	got, err := client.getListings(t.Context(), false)
@@ -256,6 +379,7 @@ func TestPaginationRateLimitReturnsExplicitPartialData(t *testing.T) {
 	client := newMarketClient()
 	client.marketURL = server.URL + "/market/actions"
 	client.pageURL = server.URL + "/listing"
+	client.dotaURL = ""
 	client.ratesURL = server.URL + "/rates"
 	client.statePath = ""
 	got, err := client.getListings(t.Context(), false)
@@ -301,6 +425,41 @@ func TestExchangeRateClientSupportsHTTP2(t *testing.T) {
 	}
 }
 
+func TestDotaMarketClientSupportsHTTP2(t *testing.T) {
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ProtoMajor != 2 {
+			t.Errorf("market.dota2.net request protocol = %s, want HTTP/2", r.Proto)
+		}
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/ajax/"):
+			_, _ = w.Write([]byte(`[[],1]`))
+		case strings.HasPrefix(r.URL.Path, "/item/"):
+			_, _ = w.Write([]byte(`<p>Reflection&#39;s ShadeПризматический самоцвет</p>`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	server.EnableHTTP2 = true
+	server.StartTLS()
+	defer server.Close()
+
+	client := newMarketClient()
+	client.dotaURL = server.URL
+	client.dotaClient = server.Client()
+	if _, _, err := client.requestDotaMarketPage(t.Context(), 1); err != nil {
+		t.Fatalf("requestDotaMarketPage() error = %v", err)
+	}
+	gem, err := client.requestDotaGem(t.Context(), dotaMarketItem{
+		ClassID: "123", InstanceID: "456", Name: itemHashName,
+	})
+	if err != nil {
+		t.Fatalf("requestDotaGem() error = %v", err)
+	}
+	if gem != "Reflection's Shade" {
+		t.Fatalf("gem = %q, want Reflection's Shade", gem)
+	}
+}
+
 func TestFetchListingsFallsBackToSteamCurrencyWhenRatesUnavailable(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -323,6 +482,7 @@ func TestFetchListingsFallsBackToSteamCurrencyWhenRatesUnavailable(t *testing.T)
 	client := newMarketClient()
 	client.marketURL = server.URL + "/market/actions"
 	client.pageURL = server.URL + "/listing"
+	client.dotaURL = ""
 	client.ratesURL = server.URL + "/rates"
 	client.statePath = ""
 	client.ratesClient = server.Client()
@@ -399,6 +559,7 @@ func TestForcedRefreshRespectsUpstreamBackoff(t *testing.T) {
 	client := newMarketClient()
 	client.marketURL = server.URL
 	client.pageURL = server.URL
+	client.dotaURL = ""
 	client.statePath = ""
 	client.retryUntil = time.Now().Add(10 * time.Minute)
 
@@ -436,6 +597,7 @@ func TestSavedCooldownDoesNotBlockStartupFetch(t *testing.T) {
 	restarted := newMarketClient()
 	restarted.marketURL = server.URL + "/market/actions"
 	restarted.pageURL = server.URL + "/listing"
+	restarted.dotaURL = ""
 	restarted.ratesURL = server.URL + "/rates"
 	restarted.statePath = statePath
 	if err := restarted.loadState(); err != nil {
@@ -473,6 +635,7 @@ func TestMarketRequestDoesNotAdvertiseGzip(t *testing.T) {
 	client := newMarketClient()
 	client.marketURL = server.URL + "/market/actions"
 	client.pageURL = server.URL + "/listing"
+	client.dotaURL = ""
 	client.ratesURL = server.URL + "/rates"
 	client.statePath = ""
 	if _, err := client.getListings(t.Context(), false); err != nil {

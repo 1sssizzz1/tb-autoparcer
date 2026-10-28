@@ -114,10 +114,15 @@ h2 span { color: #8d90a6; font: 500 12px "DM Mono", monospace; margin-left: 8px;
 .card-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; min-height: 51px; }
 .card-kicker { color: #898b9d; font: 9px "DM Mono", monospace; letter-spacing: .08em; }
 .card-title-row h3 { margin: 4px 0 0; color: #edeef4; font: 700 14px/1.35 Manrope, sans-serif; }
+.listing-tags { display: flex; max-width: 56%; flex-direction: column; align-items: flex-end; gap: 5px; }
 .gem-tag { display: inline-flex; align-items: center; gap: 7px; max-width: 54%; border: 1px solid #63477a80; background: #3624427a; color: #d9b4ef; border-radius: 5px; padding: 6px 8px; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.listing-tags .gem-tag { max-width: 100%; }
 .gem-tag.muted { border-color: #343c48; background: #1b222d; color: #a4a8b5; }
 .gem-dot { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: #ca88f1; box-shadow: 0 0 8px #c46ff288; }
 .muted .gem-dot { background: #87909f; box-shadow: none; }
+.source-tag { display: inline-flex; align-items: center; border: 1px solid #ffffff1a; border-radius: 4px; padding: 3px 6px; color: #aeb1c0; font: 8px "DM Mono", monospace; white-space: nowrap; }
+.source-tag.steam-source { border-color: #68a7db50; color: #9dc9ec; background: #3276a51a; }
+.source-tag.dota-source { border-color: #c58b5550; color: #e6b487; background: #9e63321a; }
 .card-bottom { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-top: 12px; padding-top: 12px; border-top: 1px solid #ffffff0c; }
 .card-price { display: flex; flex-direction: column; gap: 4px; }
 .card-price span, .card-id { color: #777a8c; font: 9px "DM Mono", monospace; letter-spacing: .07em; }

@@ -6,6 +6,8 @@ type Listing = {
   page_start: number;
   name: string;
   market_hash_name: string;
+  market_source: string;
+  source_item_id?: string;
   gem: string;
   price_values: Record<string, number>;
   quantity: number;
@@ -15,6 +17,8 @@ type Listing = {
 type MarketResponse = {
   listings: Listing[];
   total_count: number;
+  steam_total_count: number;
+  dota2net_total_count: number;
   updated_at: string;
   complete: boolean;
   available_currencies: string[];
@@ -31,6 +35,10 @@ const CURRENCY_LABELS: Record<string, string> = {
   USD: "$ Доллары",
   EUR: "€ Евро",
 };
+
+function getSourceLabel(source: string): string {
+  return source === "Steam Market" ? "Steam" : "Dota2.net";
+}
 
 function getGemTone(gem: string): GemTone {
   const name = gem.toLocaleLowerCase("en");
@@ -194,14 +202,14 @@ function App() {
           <a className="nav-active" href="#catalog">Каталог</a>
           <a href="#catalog">Terrorblade <span>Arcana</span></a>
         </nav>
-        <div className={`live-badge ${data?.stale || (data && !data.complete) ? "stale-badge" : ""}`}><span /> {data?.stale ? "КЭШ" : data && !data.complete ? "ЧАСТИЧНЫЕ ДАННЫЕ" : "STEAM MARKET"}</div>
+        <div className={`live-badge ${data?.stale || (data && !data.complete) ? "stale-badge" : ""}`}><span /> {data?.stale ? "КЭШ" : data && !data.complete ? "ЧАСТИЧНЫЕ ДАННЫЕ" : "STEAM + DOTA2.NET"}</div>
       </header>
 
       <section className="catalog-hero">
         <div className="hero-copy">
           <div className="eyebrow"><span className="eyebrow-line" /> DOTA 2 <span className="crumb-slash">/</span> КАТАЛОГ ГЕРОЯ</div>
           <h1>Аркана <span>Террорблейда</span></h1>
-          <p>Fractal Horns of Inner Abysm — предложения Steam с ценами и призматическими самоцветами.</p>
+          <p>Fractal Horns of Inner Abysm — предложения Steam и Dota2.net с ценами и призматическими самоцветами.</p>
           <div className="hero-pills">
             <span><Sparkles size={14} /> ARCANA</span>
             <span><Gem size={14} /> {data?.total_count ?? "—"} предложений</span>
@@ -267,7 +275,9 @@ function App() {
             <div className="section-kicker">{selectedGem ? `САМОЦВЕТ: ${selectedGem.toLocaleUpperCase("ru")}` : "АКТУАЛЬНЫЕ ПРЕДЛОЖЕНИЯ"}</div>
             <h2>Лоты <span>{listings.length} предложений</span></h2>
           </div>
-          <span className="last-updated">{data ? `Всего активных предложений: ${data.total_count}` : "Загружаем рынок…"}</span>
+          <span className="last-updated">{data
+            ? `Steam: ${data.steam_total_count} · Dota2.net: ${data.dota2net_total_count}`
+            : "Загружаем рынок…"}</span>
         </div>
 
         <div className="toolbar">
@@ -323,7 +333,10 @@ function App() {
         </div>}
 
         <div className="catalog-grid">
-          {listings.map((item, index) => (
+          {listings.map((item, index) => {
+            const sourceLabel = getSourceLabel(item.market_source);
+            const sourceItemId = item.source_item_id || item.listing_id;
+            return (
             <article className="market-card" key={item.listing_id || `${item.market_hash_name}-${index}`}>
               <div className={`card-art gem-tone-${getGemTone(item.gem)}`} aria-hidden="true">
                 <div className="art-aura" />
@@ -339,28 +352,32 @@ function App() {
                     <span className="card-kicker">FRACTAL HORNS OF</span>
                     <h3>{item.name || "Inner Abysm"}</h3>
                   </div>
-                  <span className={`gem-tag ${item.gem === "Не указано" ? "muted" : ""}`}><span className="gem-dot" />{item.gem}</span>
+                  <div className="listing-tags">
+                    <span className={`gem-tag ${item.gem === "Не указано" ? "muted" : ""}`}><span className="gem-dot" />{item.gem}</span>
+                    <span className={`source-tag ${item.market_source === "Steam Market" ? "steam-source" : "dota-source"}`}>{sourceLabel}</span>
+                  </div>
                 </div>
                 <div className="card-bottom">
                   <div className="card-price"><span>ЦЕНА</span><strong>{formatPrice(item.price_values)}</strong></div>
-                  <a className="open-link" href={item.url} target="_blank" rel="noreferrer" title={`Открыть предложение ${item.listing_id} в Steam`} aria-label={`Перейти к лоту ${item.listing_id} в Steam Market`}>
-                    Steam <ExternalLink size={14} />
+                  <a className="open-link" href={item.url} target="_blank" rel="noreferrer" title={`Открыть предложение ${sourceItemId} на ${sourceLabel}`} aria-label={`Перейти к лоту ${sourceItemId} на ${sourceLabel}`}>
+                    {sourceLabel} <ExternalLink size={14} />
                   </a>
                 </div>
-                <div className="card-id"><span>ЛОТ</span> {item.listing_id}</div>
+                <div className="card-id"><span>ЛОТ</span> {sourceItemId}</div>
               </div>
             </article>
-          ))}
+            );
+          })}
           {listings.length === 0 && !loading && !error && (
             <div className="empty-state">{data ? "Предложения не найдены. Измените фильтры." : "Лоты не найдены."}</div>
           )}
           {loading && !data && (
-            <div className="empty-state"><LoaderCircle className="spin" size={18} /> Подключаемся к Steam Market…</div>
+            <div className="empty-state"><LoaderCircle className="spin" size={18} /> Загружаем предложения маркетплейсов…</div>
           )}
         </div>
         <footer className="panel-footer">
           <span>Показано {listings.length} из {data?.listings.length ?? 0} загруженных лотов · {uniqueGems} разных самоцветов</span>
-          <span className="privacy"><ShieldCheck size={14} /> Только публичные данные Steam</span>
+          <span className="privacy"><ShieldCheck size={14} /> Только публичные данные маркетплейсов</span>
         </footer>
       </section>
       <p className="disclaimer">Пересчёт в евро, доллары и рубли выполняется по последнему доступному курсу ЦБ. Ссылка на карточке открывает выбранное предложение в Steam Market.</p>

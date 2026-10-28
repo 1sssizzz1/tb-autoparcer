@@ -8,7 +8,7 @@ RUN npm run build
 FROM golang:1.24-alpine AS backend-build
 WORKDIR /app
 COPY go.mod ./
-COPY main.go ./
+COPY main.go api.go market_service.go market_sources.go ./
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /tb-market-parser .
 
 FROM alpine:3.21
