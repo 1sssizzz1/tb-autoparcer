@@ -78,6 +78,11 @@ type dotaMarketItem struct {
 	Index      int
 }
 
+type dotaItemDetails struct {
+	Gem               string
+	AutoBuyPriceCents int64
+}
+
 type steamMarketListing struct {
 	ListingID   string `json:"listingid"`
 	Price       int64  `json:"unPrice"`
@@ -111,7 +116,97 @@ var tagPattern = regexp.MustCompile(`<[^>]*>`)
 
 var gemHTMLPattern = regexp.MustCompile(`(?is)<span\b[^>]*>\s*([^<>]+?)\s*</span>\s*<br\s*/?>\s*<span\b[^>]*>\s*(?:prismatic\s+gem|призматический\s+самоцвет)\s*</span>`)
 
-var dotaGemHTMLPattern = regexp.MustCompile(`(?is)<p\b[^>]*>\s*([^<>]+?)\s*(?:призматический\s+самоцвет|prismatic\s+gem)\s*</p>`)
+var dotaGemHTMLPattern = regexp.MustCompile(`(?is)<p\b[^>]*>\s*([^<>]+?)\s*(?:призматический\s+самоцвет|prismatic\s+gem)`)
+
+var dotaAutoBuySectionPattern = regexp.MustCompile(`(?is)<h3\b[^>]*>\s*Запросы на автопокупку\s*</h3>(.*)`)
+var dotaSectionHeadingPattern = regexp.MustCompile(`(?is)<h3\b`)
+var dotaAutoBuyTierPattern = regexp.MustCompile(`(?is)<div\b[^>]*class="rectanglestat"[^>]*>\s*<b\b[^>]*>(.*?)</b>\s*<div\b[^>]*>(.*?)</div>`)
+
+var prismaticGemNames = map[string]string{
+	"аленький цветочек":      "Vermillion Renewal",
+	"глубокий зелёный":       "Deep Green",
+	"глубокий зеленый":       "Deep Green",
+	"глубокий синий":         "Deep Blue",
+	"зелёная планета":        "Earth Green",
+	"зеленая планета":        "Earth Green",
+	"зелёная сосна":          "Unhallowed Ground",
+	"зеленая сосна":          "Unhallowed Ground",
+	"золото hand of midas":   "Gold",
+	"золотой":                "Gold",
+	"красный":                "Red",
+	"летнее тепло":           "Summer Warmth",
+	"оранжевый":              "Orange",
+	"отталкивающий чёрный":   "Cursed Black",
+	"отталкивающий черный":   "Cursed Black",
+	"свет создателя":         "Creator's Light",
+	"светло-зелёный":         "Light Green",
+	"светло-зеленый":         "Light Green",
+	"сдержанно-красный":      "Rubiline",
+	"сине-зелёный":           "Sea Green",
+	"сине-зеленый":           "Sea Green",
+	"синий":                  "Blue",
+	"синий кристалл":         "Crystalline Blue",
+	"спокойный синий":        "Placid Blue",
+	"тлеющее пламя":          "Pyroclastic Flow",
+	"фиолетовый":             "Purple",
+	"чемпионский зелёный":    "Champion's Green",
+	"чемпионский зеленый":    "Champion's Green",
+	"чемпионский синий":      "Champion's Blue",
+	"чемпионский фиолетовый": "Champion's Purple",
+	"чумной серый":           "Plague Grey",
+	"ярко-зелёный":           "Bright Green",
+	"ярко-зеленый":           "Bright Green",
+	"ярко-фиолетовый":        "Bright Purple",
+}
+
+var canonicalPrismaticGemNames = map[string]string{
+	"blue":                   "Blue",
+	"bright green":           "Bright Green",
+	"bright purple":          "Bright Purple",
+	"brusque britches beige": "Brusque Britches Beige",
+	"champion's blue":        "Champion's Blue",
+	"champion's green":       "Champion's Green",
+	"champion's purple":      "Champion's Purple",
+	"creator's light":        "Creator's Light",
+	"crystalline blue":       "Crystalline Blue",
+	"cursed black":           "Cursed Black",
+	"deep blue":              "Deep Blue",
+	"deep green":             "Deep Green",
+	"diretide orange":        "Diretide Orange",
+	"dredge earth":           "Dredge Earth",
+	"dungeon doom":           "Dungeon Doom",
+	"earth green":            "Earth Green",
+	"explosive burst":        "Explosive Burst",
+	"glacial flow":           "Glacial Flow",
+	"gold":                   "Gold",
+	"light green":            "Light Green",
+	"miasmatic grey":         "Miasmatic Grey",
+	"orange":                 "Orange",
+	"placid blue":            "Placid Blue",
+	"plague grey":            "Plague Grey",
+	"plushy shag":            "Plushy Shag",
+	"purple":                 "Purple",
+	"pyroclastic flow":       "Pyroclastic Flow",
+	"reflection's shade":     "Reflection's Shade",
+	"rubiline":               "Rubiline",
+	"sea green":              "Sea Green",
+	"ships in the night":     "Ships in the Night",
+	"summer warmth":          "Summer Warmth",
+	"tnim s'nnam":            "Tnim S'nnam",
+	"unhallowed ground":      "Unhallowed Ground",
+	"vermillion renewal":     "Vermillion Renewal",
+}
+
+func normalizePrismaticGemName(name string) string {
+	normalized := strings.ToLower(strings.TrimSpace(name))
+	if canonical, ok := prismaticGemNames[normalized]; ok {
+		return canonical
+	}
+	if canonical, ok := canonicalPrismaticGemNames[normalized]; ok {
+		return canonical
+	}
+	return strings.TrimSpace(name)
+}
 
 func (c *marketClient) fetchSteamListings(ctx context.Context) (priceResponse, error) {
 	result := priceResponse{
@@ -330,7 +425,7 @@ func dotaGemCacheKey(item listing) string {
 }
 
 func (c *marketClient) buildDotaListings(ctx context.Context, items []dotaMarketItem) ([]listing, error) {
-	gems, lookupErrors := c.resolveDotaGems(ctx, items)
+	details, lookupErrors := c.resolveDotaItemDetails(ctx, items)
 	if lookupErrors > 0 {
 		log.Printf("market.dota2.net gem details unavailable: items=%d failures=%d", len(items), lookupErrors)
 	}
@@ -343,20 +438,26 @@ func (c *marketClient) buildDotaListings(ctx context.Context, items []dotaMarket
 		priceCents := int64(math.Round(item.Price * 100))
 		priceValues := convertPriceValues(priceCents, 5, rates)
 		key := item.ClassID + "-" + item.InstanceID
-		gem := gems[key]
+		itemDetails := details[key]
+		gem := itemDetails.Gem
 		if gem == "" {
 			gem = "Не указано"
 		}
+		autoBuyPriceValues := convertPriceValues(itemDetails.AutoBuyPriceCents, 5, rates)
+		if itemDetails.AutoBuyPriceCents <= 0 {
+			autoBuyPriceValues = nil
+		}
 		listings = append(listings, listing{
-			ListingID:      fmt.Sprintf("dota2net-%s-%s-%d-%d", item.ClassID, item.InstanceID, item.Page, item.Index),
-			Name:           item.Name,
-			MarketHashName: item.Name,
-			Source:         "market.dota2.net",
-			SourceItemID:   key,
-			Gem:            gem,
-			PriceValues:    priceValues,
-			Quantity:       1,
-			URL:            dotaItemURL(c.dotaURL, item.ClassID, item.InstanceID, item.Name),
+			ListingID:          fmt.Sprintf("dota2net-%s-%s-%d-%d", item.ClassID, item.InstanceID, item.Page, item.Index),
+			Name:               item.Name,
+			MarketHashName:     item.Name,
+			Source:             "market.dota2.net",
+			SourceItemID:       key,
+			Gem:                gem,
+			PriceValues:        priceValues,
+			AutoBuyPriceValues: autoBuyPriceValues,
+			Quantity:           1,
+			URL:                dotaItemURL(c.dotaURL, item.ClassID, item.InstanceID, item.Name),
 		})
 	}
 	if lookupErrors > 0 {
@@ -365,24 +466,24 @@ func (c *marketClient) buildDotaListings(ctx context.Context, items []dotaMarket
 	return listings, nil
 }
 
-func (c *marketClient) resolveDotaGems(ctx context.Context, items []dotaMarketItem) (map[string]string, int) {
-	if c.dotaGemCache == nil {
-		c.dotaGemCache = make(map[string]string)
+func (c *marketClient) resolveDotaItemDetails(ctx context.Context, items []dotaMarketItem) (map[string]dotaItemDetails, int) {
+	if c.dotaItemDetailsCache == nil {
+		c.dotaItemDetailsCache = make(map[string]dotaItemDetails)
 	}
 	lookups := make(map[string]dotaMarketItem)
 	for _, item := range items {
 		key := item.ClassID + "-" + item.InstanceID
-		if _, cached := c.dotaGemCache[key]; !cached {
+		if _, cached := c.dotaItemDetailsCache[key]; !cached {
 			lookups[key] = item
 		}
 	}
 	if len(lookups) == 0 {
-		return c.dotaGemCache, 0
+		return c.dotaItemDetailsCache, 0
 	}
 	type gemResult struct {
-		key string
-		gem string
-		err error
+		key     string
+		details dotaItemDetails
+		err     error
 	}
 	jobs := make(chan struct {
 		key  string
@@ -396,8 +497,8 @@ func (c *marketClient) resolveDotaGems(ctx context.Context, items []dotaMarketIt
 		go func() {
 			defer workers.Done()
 			for job := range jobs {
-				gem, err := c.requestDotaGem(ctx, job.item)
-				results <- gemResult{key: job.key, gem: gem, err: err}
+				details, err := c.requestDotaItemDetails(ctx, job.item)
+				results <- gemResult{key: job.key, details: details, err: err}
 			}
 		}()
 	}
@@ -416,42 +517,81 @@ func (c *marketClient) resolveDotaGems(ctx context.Context, items []dotaMarketIt
 			failures++
 			continue
 		}
-		c.dotaGemCache[result.key] = result.gem
+		c.dotaItemDetailsCache[result.key] = result.details
 	}
-	return c.dotaGemCache, failures
+	return c.dotaItemDetailsCache, failures
 }
 
 func (c *marketClient) requestDotaGem(ctx context.Context, item dotaMarketItem) (string, error) {
+	details, err := c.requestDotaItemDetails(ctx, item)
+	if err != nil {
+		return "", err
+	}
+	return details.Gem, nil
+}
+
+func (c *marketClient) requestDotaItemDetails(ctx context.Context, item dotaMarketItem) (dotaItemDetails, error) {
 	requestURL := dotaItemURL(c.dotaURL, item.ClassID, item.InstanceID, item.Name)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("create market.dota2.net item request: %w", err)
+		return dotaItemDetails{}, fmt.Errorf("create market.dota2.net item request: %w", err)
 	}
 	req.Header.Set("Accept", "text/html,application/xhtml+xml")
 	req.Header.Set("Referer", strings.TrimRight(c.dotaURL, "/")+"/?r=Arcana&t=109&sd=desc")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36")
 	resp, err := c.dotaClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("request market.dota2.net item details: %w", err)
+		return dotaItemDetails{}, fmt.Errorf("request market.dota2.net item details: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 2048))
-		return "", fmt.Errorf("market.dota2.net item details returned HTTP %d", resp.StatusCode)
+		return dotaItemDetails{}, fmt.Errorf("market.dota2.net item details returned HTTP %d", resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 	if err != nil {
-		return "", fmt.Errorf("read market.dota2.net item details: %w", err)
+		return dotaItemDetails{}, fmt.Errorf("read market.dota2.net item details: %w", err)
 	}
+	return extractDotaItemDetails(body), nil
+}
+
+func extractDotaGem(body []byte) string {
 	match := dotaGemHTMLPattern.FindSubmatch(body)
 	if len(match) < 2 {
-		return "Не указано", nil
+		return "Не указано"
 	}
-	gem := strings.TrimSpace(html.UnescapeString(string(match[1])))
+	gem := normalizePrismaticGemName(html.UnescapeString(string(match[1])))
 	if gem == "" {
-		return "Не указано", nil
+		return "Не указано"
 	}
-	return gem, nil
+	return gem
+}
+
+func extractDotaItemDetails(body []byte) dotaItemDetails {
+	details := dotaItemDetails{Gem: extractDotaGem(body)}
+	section := dotaAutoBuySectionPattern.FindSubmatch(body)
+	if len(section) < 2 {
+		return details
+	}
+	content := section[1]
+	if nextHeading := dotaSectionHeadingPattern.FindIndex(content); nextHeading != nil {
+		content = content[:nextHeading[0]]
+	}
+	for _, tier := range dotaAutoBuyTierPattern.FindAllSubmatch(content, -1) {
+		if len(tier) < 3 {
+			continue
+		}
+		label := strings.TrimSpace(html.UnescapeString(tagPattern.ReplaceAllString(string(tier[2]), " ")))
+		if strings.Contains(strings.ToLower(label), "всего запросов") {
+			continue
+		}
+		priceText := strings.TrimSpace(html.UnescapeString(tagPattern.ReplaceAllString(string(tier[1]), " ")))
+		price := parsePriceCents(priceText)
+		if price > details.AutoBuyPriceCents {
+			details.AutoBuyPriceCents = price
+		}
+	}
+	return details
 }
 
 func (c *marketClient) openMarketSession(ctx context.Context) error {
@@ -548,7 +688,7 @@ func findGem(descriptionGroups ...[]steamDescription) string {
 	for _, group := range descriptionGroups {
 		for _, description := range group {
 			if match := gemHTMLPattern.FindStringSubmatch(description.Value); len(match) > 1 {
-				gem := strings.TrimSpace(html.UnescapeString(match[1]))
+				gem := normalizePrismaticGemName(html.UnescapeString(match[1]))
 				if gem != "" {
 					return gem
 				}
@@ -556,7 +696,7 @@ func findGem(descriptionGroups ...[]steamDescription) string {
 			text := strings.TrimSpace(html.UnescapeString(tagPattern.ReplaceAllString(description.Value, " ")))
 			match := gemPattern.FindStringSubmatch(text)
 			if len(match) > 1 {
-				gem := strings.TrimSpace(match[1])
+				gem := normalizePrismaticGemName(match[1])
 				gem = strings.Trim(gem, " .|")
 				if gem != "" {
 					return gem

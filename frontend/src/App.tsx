@@ -10,6 +10,7 @@ type Listing = {
   source_item_id?: string;
   gem: string;
   price_values: Record<string, number>;
+  autobuy_price_values?: Record<string, number>;
   quantity: number;
   url: string;
 };
@@ -25,6 +26,16 @@ type MarketResponse = {
   stale?: boolean;
   warning?: string;
   retry_after_seconds?: number;
+};
+
+type GemPriceComparison = {
+  gem: string;
+  steam?: number;
+  dota2net?: number;
+  dota2netAutoBuy?: number;
+  spread?: number;
+  spreadPercent?: number;
+  cheaperSource?: string;
 };
 
 type GemTone = "blue" | "green" | "gold" | "orange" | "purple" | "red" | "pink" | "grey";
@@ -62,6 +73,15 @@ function formatOfferCount(count: number): string {
   return `${count} лотов`;
 }
 
+function formatCurrencyValue(value: number, currency: string): string {
+  return new Intl.NumberFormat("ru-RU", {
+    style: "currency",
+    currency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value / 100);
+}
+
 function App() {
   const [data, setData] = useState<MarketResponse | null>(null);
   const [error, setError] = useState("");
@@ -70,6 +90,7 @@ function App() {
   const [selectedGem, setSelectedGem] = useState("");
   const [sortAscending, setSortAscending] = useState(true);
   const [currency, setCurrency] = useState("RUB");
+  const [activeTab, setActiveTab] = useState<"catalog" | "comparison">("catalog");
   const [refreshInterval, setRefreshInterval] = useState(REFRESH_INTERVAL);
   const refreshIntervalRef = useRef(REFRESH_INTERVAL);
 
@@ -152,12 +173,7 @@ function App() {
   const formatPrice = (values: Record<string, number>) => {
     const value = values[activeCurrency];
     if (value === undefined) return "—";
-    return new Intl.NumberFormat("ru-RU", {
-      style: "currency",
-      currency: activeCurrency,
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(value / 100);
+    return formatCurrencyValue(value, activeCurrency);
   };
   const uniqueGems = new Set((data?.listings ?? []).map((item) => item.gem).filter((gem) => gem !== "Не указано")).size;
   const gemOptions = [...new Set((data?.listings ?? []).map((item) => item.gem))]
@@ -181,6 +197,45 @@ function App() {
         return (a.lowestPrice ?? Number.MAX_SAFE_INTEGER) - (b.lowestPrice ?? Number.MAX_SAFE_INTEGER);
       });
   }, [data, activeCurrency]);
+  const gemPriceComparisons = useMemo(() => {
+    const prices = new Map<string, { steam?: number; dota2net?: number; dota2netAutoBuy?: number }>();
+    for (const item of data?.listings ?? []) {
+      if (item.gem === "Не указано") continue;
+      const price = item.price_values[activeCurrency];
+      const summary = prices.get(item.gem) ?? {};
+      if (price !== undefined && item.market_source === "Steam Market") {
+        summary.steam = summary.steam === undefined ? price : Math.min(summary.steam, price);
+      } else if (price !== undefined && item.market_source === "market.dota2.net") {
+        summary.dota2net = summary.dota2net === undefined ? price : Math.min(summary.dota2net, price);
+      }
+      const autoBuyPrice = item.autobuy_price_values?.[activeCurrency];
+      if (item.market_source === "market.dota2.net" && autoBuyPrice !== undefined) {
+        summary.dota2netAutoBuy = summary.dota2netAutoBuy === undefined
+          ? autoBuyPrice
+          : Math.max(summary.dota2netAutoBuy, autoBuyPrice);
+      }
+      prices.set(item.gem, summary);
+    }
+    return [...prices.entries()]
+      .map(([gem, marketPrices]): GemPriceComparison => {
+        const { steam, dota2net } = marketPrices;
+        if (steam === undefined || dota2net === undefined) {
+          return { gem, steam, dota2net, dota2netAutoBuy: marketPrices.dota2netAutoBuy };
+        }
+        const spread = Math.abs(steam - dota2net);
+        const lowerPrice = Math.min(steam, dota2net);
+        return {
+          gem,
+          steam,
+          dota2net,
+          dota2netAutoBuy: marketPrices.dota2netAutoBuy,
+          spread,
+          spreadPercent: lowerPrice > 0 ? (spread / lowerPrice) * 100 : 0,
+          cheaperSource: steam === dota2net ? undefined : steam < dota2net ? "Steam" : "Dota2.net",
+        };
+      })
+      .sort((a, b) => (b.spreadPercent ?? -1) - (a.spreadPercent ?? -1) || a.gem.localeCompare(b.gem));
+  }, [data, activeCurrency]);
   const updatedAt = data?.updated_at
     ? new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(data.updated_at))
     : "—";
@@ -199,8 +254,8 @@ function App() {
           <span>TB <b>MARKET WATCH</b></span>
         </a>
         <nav className="catalog-nav" aria-label="Навигация">
-          <a className="nav-active" href="#catalog">Каталог</a>
-          <a href="#catalog">Terrorblade <span>Arcana</span></a>
+          <button className={activeTab === "catalog" ? "nav-active" : ""} type="button" onClick={() => setActiveTab("catalog")} aria-current={activeTab === "catalog" ? "page" : undefined}>Каталог</button>
+          <button className={activeTab === "comparison" ? "nav-active" : ""} type="button" onClick={() => setActiveTab("comparison")} aria-current={activeTab === "comparison" ? "page" : undefined}>Сравнение цен</button>
         </nav>
         <div className={`live-badge ${data?.stale || (data && !data.complete) ? "stale-badge" : ""}`}><span /> {data?.stale ? "КЭШ" : data && !data.complete ? "ЧАСТИЧНЫЕ ДАННЫЕ" : "STEAM + DOTA2.NET"}</div>
       </header>
@@ -224,6 +279,7 @@ function App() {
         </div>
       </section>
 
+      {activeTab === "catalog" ? <>
       <section className="catalog-section gem-overview" id="catalog">
         <div className="panel-heading">
           <div>
@@ -381,6 +437,86 @@ function App() {
         </footer>
       </section>
       <p className="disclaimer">Пересчёт в евро, доллары и рубли выполняется по последнему доступному курсу ЦБ. Ссылка на карточке открывает выбранное предложение в Steam Market.</p>
+      </> : (
+        <section className="catalog-section comparison-section" aria-labelledby="comparison-title">
+          <div className="panel-heading comparison-heading">
+            <div>
+              <div className="section-kicker">МИНИМАЛЬНЫЕ ЦЕНЫ ПО ПРИЗМАТИЧЕСКИМ САМОЦВЕТАМ</div>
+              <h2 id="comparison-title">Сравнение площадок <span>{gemPriceComparisons.length} гемов</span></h2>
+            </div>
+            <div className="comparison-controls">
+              <span className="last-updated">Обновлено: {updatedAt}</span>
+              <label className="catalog-select">
+                <span>Валюта</span>
+                <select
+                  aria-label="Валюта сравнения"
+                  value={activeCurrency}
+                  onChange={(event) => setCurrency(event.target.value)}
+                  disabled={availableCurrencies.length < 2}
+                >
+                  {(availableCurrencies.length ? availableCurrencies : ["RUB"]).map((code) => (
+                    <option key={code} value={code}>{CURRENCY_LABELS[code] ?? code}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </div>
+          {error && <div className="error-banner" role="alert">{error}</div>}
+          {data?.warning && <div className="warning-banner" role="status">{data.warning}</div>}
+          <div className="comparison-table-wrap">
+            <table className="comparison-table">
+              <thead>
+                <tr>
+                  <th>Самоцвет</th>
+                  <th>Steam · минимум</th>
+                  <th>Dota2.net · минимум</th>
+                  <th>Dota2.net · автопокупка</th>
+                  <th>Разница</th>
+                </tr>
+              </thead>
+              <tbody>
+                {gemPriceComparisons.map((row) => (
+                  <tr key={row.gem}>
+                    <th scope="row">
+                      <span className={`comparison-gem gem-tone-${getGemTone(row.gem)}`}>
+                        <Gem size={16} /> {row.gem}
+                      </span>
+                    </th>
+                    <td>{row.steam === undefined ? <span className="comparison-missing">Нет лотов</span> : formatCurrencyValue(row.steam, activeCurrency)}</td>
+                    <td>{row.dota2net === undefined ? <span className="comparison-missing">Нет лотов</span> : formatCurrencyValue(row.dota2net, activeCurrency)}</td>
+                    <td>
+                      {row.dota2netAutoBuy === undefined
+                        ? <span className="comparison-missing">Нет заявок</span>
+                        : <div className="comparison-difference">
+                          <strong className="comparison-autobuy-price">{formatCurrencyValue(row.dota2netAutoBuy, activeCurrency)}</strong>
+                          <small>Максимальная текущая цена</small>
+                        </div>}
+                    </td>
+                    <td>
+                      {row.spread === undefined ? <span className="comparison-missing">Недостаточно данных</span> : (
+                        <div className="comparison-difference">
+                          <strong>{formatCurrencyValue(row.spread, activeCurrency)} <span>({row.spreadPercent?.toFixed(1)}%)</span></strong>
+                          <small>{row.cheaperSource ? `Дешевле на ${row.cheaperSource}` : "Одинаковая цена"}</small>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {gemPriceComparisons.length === 0 && (
+                  <tr><td colSpan={5} className="comparison-empty">{data ? "Нет данных для сравнения по гему." : "Загружаем предложения…"}</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <footer className="panel-footer">
+            <span>Разница считается между минимальными ценами. Процент рассчитан относительно более низкой цены.</span>
+            <button className="refresh-button" type="button" onClick={() => void refresh(true)} disabled={loading}>
+              {loading ? <LoaderCircle className="spin" size={16} /> : <RefreshCw size={16} />}
+              {loading ? "Обновление" : "Обновить"}
+            </button>
+          </footer>
+        </section>
+      )}
     </main>
   );
 }

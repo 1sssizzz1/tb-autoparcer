@@ -35,16 +35,17 @@ const (
 )
 
 type listing struct {
-	ListingID      string           `json:"listing_id"`
-	PageStart      int              `json:"page_start"`
-	Name           string           `json:"name"`
-	MarketHashName string           `json:"market_hash_name"`
-	Source         string           `json:"market_source"`
-	SourceItemID   string           `json:"source_item_id,omitempty"`
-	Gem            string           `json:"gem"`
-	PriceValues    map[string]int64 `json:"price_values"`
-	Quantity       int              `json:"quantity"`
-	URL            string           `json:"url"`
+	ListingID          string           `json:"listing_id"`
+	PageStart          int              `json:"page_start"`
+	Name               string           `json:"name"`
+	MarketHashName     string           `json:"market_hash_name"`
+	Source             string           `json:"market_source"`
+	SourceItemID       string           `json:"source_item_id,omitempty"`
+	Gem                string           `json:"gem"`
+	PriceValues        map[string]int64 `json:"price_values"`
+	AutoBuyPriceValues map[string]int64 `json:"autobuy_price_values,omitempty"`
+	Quantity           int              `json:"quantity"`
+	URL                string           `json:"url"`
 }
 
 type priceResponse struct {
@@ -207,22 +208,22 @@ func (e *rateLimitError) Error() string {
 }
 
 type marketClient struct {
-	httpClient   *http.Client
-	dotaClient   *http.Client
-	ratesClient  *http.Client
-	marketURL    string
-	pageURL      string
-	dotaURL      string
-	ratesURL     string
-	statePath    string
-	mu           sync.Mutex
-	cache        *cacheEntry
-	rates        map[string]float64
-	ratesExpires time.Time
-	sessionReady bool
-	retryUntil   time.Time
-	forceAfter   time.Time
-	dotaGemCache map[string]string
+	httpClient           *http.Client
+	dotaClient           *http.Client
+	ratesClient          *http.Client
+	marketURL            string
+	pageURL              string
+	dotaURL              string
+	ratesURL             string
+	statePath            string
+	mu                   sync.Mutex
+	cache                *cacheEntry
+	rates                map[string]float64
+	ratesExpires         time.Time
+	sessionReady         bool
+	retryUntil           time.Time
+	forceAfter           time.Time
+	dotaItemDetailsCache map[string]dotaItemDetails
 }
 
 type savedMarketState struct {
@@ -231,7 +232,7 @@ type savedMarketState struct {
 	CacheExpires time.Time      `json:"cache_expires,omitempty"`
 }
 
-const cacheVersion = 5
+const cacheVersion = 9
 
 const (
 	initialRetryDelay = time.Minute
@@ -254,12 +255,12 @@ func newMarketClient() *marketClient {
 			Timeout:   10 * time.Second,
 			Transport: ratesTransport,
 		},
-		marketURL:    steamMarketURL,
-		pageURL:      steamListingPageURL,
-		dotaURL:      dotaMarketURL,
-		ratesURL:     cbrRatesURL,
-		statePath:    "data/market-state.json",
-		dotaGemCache: make(map[string]string),
+		marketURL:            steamMarketURL,
+		pageURL:              steamListingPageURL,
+		dotaURL:              dotaMarketURL,
+		ratesURL:             cbrRatesURL,
+		statePath:            "data/market-state.json",
+		dotaItemDetailsCache: make(map[string]dotaItemDetails),
 	}
 }
 
@@ -283,8 +284,10 @@ func (c *marketClient) loadState() error {
 		repairedURLs := repairCachedListingURLs(&response)
 		c.cache = &cacheEntry{response: response, expires: state.CacheExpires}
 		for _, item := range response.Listings {
-			if item.Source == "market.dota2.net" && item.Gem != "" && item.Gem != "Не указано" {
-				c.dotaGemCache[dotaGemCacheKey(item)] = item.Gem
+			if item.Source == "market.dota2.net" && item.Gem != "" {
+				details := dotaItemDetails{Gem: item.Gem}
+				details.AutoBuyPriceCents = item.AutoBuyPriceValues["RUB"]
+				c.dotaItemDetailsCache[dotaGemCacheKey(item)] = details
 			}
 		}
 		if repairedURLs {

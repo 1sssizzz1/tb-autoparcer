@@ -25,10 +25,9 @@ button { color: inherit; }
 .brand b { font-size: 11px; color: #9c9eb0; letter-spacing: .14em; margin-left: 4px; }
 .brand-mark { width: 36px; height: 36px; display: grid; place-items: center; color: #a9eff0; border: 1px solid #a9eff052; background: #83dfe31a; border-radius: 11px; }
 .catalog-nav { display: flex; align-items: stretch; height: 100%; gap: 8px; }
-.catalog-nav a { position: relative; display: flex; align-items: center; gap: 7px; padding: 0 19px; color: #9698ae; text-decoration: none; font-weight: 600; }
-.catalog-nav a:hover, .catalog-nav .nav-active { color: #d8fbfb; }
+.catalog-nav button { position: relative; display: flex; align-items: center; gap: 7px; padding: 0 16px; border: 0; color: #9698ae; background: transparent; cursor: pointer; font-weight: 600; white-space: nowrap; }
+.catalog-nav button:hover, .catalog-nav .nav-active { color: #d8fbfb; }
 .catalog-nav .nav-active::after { position: absolute; content: ""; height: 2px; left: 16px; right: 16px; bottom: 0; background: var(--accent); }
-.catalog-nav a span { color: #9fd957; font-size: 11px; }
 .live-badge { margin-left: auto; color: #a8adbb; font: 10px "DM Mono", monospace; letter-spacing: .08em; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 .live-badge span { width: 7px; height: 7px; border-radius: 50%; background: #54d89e; box-shadow: 0 0 12px #51d6a080; }
 .live-badge.stale-badge span { background: #e6ac58; box-shadow: 0 0 12px #e6ac5880; }
@@ -136,6 +135,23 @@ h2 span { color: #8d90a6; font: 500 12px "DM Mono", monospace; margin-left: 8px;
 .panel-footer { display: flex; justify-content: space-between; gap: 15px; padding: 14px 25px; border-top: 1px solid #262835; color: #828597; font-size: 10px; }
 .privacy { display: inline-flex; align-items: center; gap: 5px; color: #9ba995; white-space: nowrap; }
 .disclaimer { margin: 15px 0 0; color: #696c7c; font-size: 10px; line-height: 1.6; text-align: center; }
+.comparison-section { margin-top: 28px; }
+.comparison-heading { align-items: center; }
+.comparison-controls { display: flex; align-items: center; gap: 18px; }
+.comparison-table-wrap { overflow-x: auto; padding: 0 25px 20px; }
+.comparison-table { width: 100%; border-collapse: collapse; text-align: left; }
+.comparison-table th, .comparison-table td { padding: 15px 14px; border-bottom: 1px solid #ffffff0d; }
+.comparison-table thead th { color: #85889d; font: 9px "DM Mono", monospace; letter-spacing: .08em; text-transform: uppercase; }
+.comparison-table tbody th { font-weight: 600; }
+.comparison-table tbody td { color: #e0e1e9; font-size: 12px; white-space: nowrap; }
+.comparison-gem { display: inline-flex; align-items: center; gap: 9px; color: var(--gem-color); font-size: 12px; }
+.comparison-difference { display: flex; flex-direction: column; gap: 5px; }
+.comparison-difference strong { color: #eacb8d; font-size: 12px; }
+.comparison-difference .comparison-autobuy-price { color: #a7e6bd; }
+.comparison-difference strong span { color: #f0d7a8; }
+.comparison-difference small, .comparison-missing { color: #85889d; font-size: 10px; }
+.comparison-empty { text-align: center; color: #9295a7 !important; padding: 40px !important; }
+.comparison-section .panel-footer { align-items: center; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (max-width: 1050px) {
@@ -152,7 +168,10 @@ h2 span { color: #8d90a6; font: 500 12px "DM Mono", monospace; margin-left: 8px;
   .brand { font-size: 13px; gap: 8px; }
   .brand b { font-size: 9px; }
   .brand-mark { width: 31px; height: 31px; }
-  .catalog-nav { display: none; }
+  .catalog-nav { min-width: 0; flex: 1 1 auto; gap: 0; overflow-x: auto; scrollbar-width: none; }
+  .catalog-nav::-webkit-scrollbar { display: none; }
+  .catalog-nav button { padding: 0 9px; font-size: 10px; }
+  .catalog-nav .nav-active::after { left: 8px; right: 8px; }
   .live-badge { font-size: 8px; }
   .catalog-hero { min-height: 260px; margin: 18px 0 24px; padding: 27px 24px; }
   .hero-copy { width: 88%; }
@@ -188,6 +207,12 @@ h2 span { color: #8d90a6; font: 500 12px "DM Mono", monospace; margin-left: 8px;
   .open-link { width: 100%; }
   .card-id { margin-top: 9px; font-size: 8px; overflow: hidden; text-overflow: ellipsis; }
   .panel-footer { flex-direction: column; padding: 12px 16px; }
+  .comparison-section { margin-top: 16px; }
+  .comparison-heading { flex-direction: column; }
+  .comparison-controls { width: 100%; justify-content: space-between; }
+  .comparison-table-wrap { padding: 0 12px 15px; }
+  .comparison-table { min-width: 800px; }
+  .comparison-table th, .comparison-table td { padding: 12px 10px; }
 }
 @media (max-width: 400px) {
   .catalog-grid { grid-template-columns: 1fr; }

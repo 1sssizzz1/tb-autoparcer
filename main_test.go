@@ -62,6 +62,48 @@ func TestFindGem(t *testing.T) {
 	}
 }
 
+func TestNormalizePrismaticGemNameUsesSharedEnglishCategories(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+	}{
+		{"Аленький цветочек", "Vermillion Renewal"},
+		{"Глубокий зелёный", "Deep Green"},
+		{"Глубокий синий", "Deep Blue"},
+		{"Зеленая планета", "Earth Green"},
+		{"Зеленая сосна", "Unhallowed Ground"},
+		{"Золото Hand of Midas", "Gold"},
+		{"Золотой", "Gold"},
+		{"Красный", "Red"},
+		{"Летнее тепло", "Summer Warmth"},
+		{"Оранжевый", "Orange"},
+		{"Отталкивающий чёрный", "Cursed Black"},
+		{"Свет создателя", "Creator's Light"},
+		{"Светло-зелёный", "Light Green"},
+		{"Сдержанно-красный", "Rubiline"},
+		{"Сине-зелёный", "Sea Green"},
+		{"Синий", "Blue"},
+		{"Синий кристалл", "Crystalline Blue"},
+		{"Спокойный синий", "Placid Blue"},
+		{"Тлеющее пламя", "Pyroclastic Flow"},
+		{"Фиолетовый", "Purple"},
+		{"Чемпионский зелёный", "Champion's Green"},
+		{"Чемпионский синий", "Champion's Blue"},
+		{"Чемпионский фиолетовый", "Champion's Purple"},
+		{"Чумной серый", "Plague Grey"},
+		{"Ярко-зелёный", "Bright Green"},
+		{"Ярко-фиолетовый", "Bright Purple"},
+		{" reflection's shade ", "Reflection's Shade"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizePrismaticGemName(tt.name); got != tt.want {
+				t.Errorf("normalizePrismaticGemName(%q) = %q, want %q", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParsePriceCents(t *testing.T) {
 	for _, tt := range []struct {
 		value string
@@ -155,6 +197,94 @@ func TestFetchDotaListingsParsesTerrorbladeArcanaPagesAndGems(t *testing.T) {
 		if !strings.HasPrefix(actual.URL, server.URL+"/item/") {
 			t.Errorf("listing[%d] URL = %q, want Dota Market item URL", i, actual.URL)
 		}
+	}
+}
+
+func TestExtractDotaGemWithAdditionalEmptySockets(t *testing.T) {
+	tests := []struct {
+		name string
+		html string
+		want string
+	}{
+		{
+			name: "Russian prism gem followed by empty sockets",
+			html: `<p >Tnim S&#39;nnamПризматический самоцветПустое гнездоОбщийПустое гнездоОбщий</p>`,
+			want: "Tnim S'nnam",
+		},
+		{
+			name: "English prism gem followed by socket description",
+			html: `<p>Reflection&#39;s ShadePrismatic GemEmpty SocketCommon</p>`,
+			want: "Reflection's Shade",
+		},
+		{
+			name: "missing prism gem",
+			html: `<p>Empty SocketCommon</p>`,
+			want: "Не указано",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := extractDotaGem([]byte(tt.html)); got != tt.want {
+				t.Errorf("extractDotaGem() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExtractDotaItemDetailsParsesMaximumAutoBuyPrice(t *testing.T) {
+	body := []byte(`<div class="item-stat">
+		<h3>Запросы на автопокупку</h3>
+		<div class="rectanglestats">
+			<div class="rectanglestat"><b>76</b><div>Всего запросов</div></div>
+			<div class="rectanglestat"><b> 2 649.41&nbsp;<small></small> </b><div>1 запрос</div></div>
+			<div class="rectanglestat"><b> 2 619.72&nbsp;<small></small> и менее</b><div>72 запроса</div></div>
+			<div class="rectanglestat"><b> 2 700.00&nbsp;<small></small></b><div>2 запроса</div></div>
+		</div>
+	</div>
+	<div class="item-stat"><h3>Статистика последних покупок</h3></div>
+	<p>Tnim S&#39;nnamПризматический самоцветПустое гнездоОбщий</p>`)
+
+	got := extractDotaItemDetails(body)
+	if got.Gem != "Tnim S'nnam" {
+		t.Errorf("Gem = %q, want Tnim S'nnam", got.Gem)
+	}
+	if got.AutoBuyPriceCents != 270000 {
+		t.Errorf("AutoBuyPriceCents = %d, want maximum 270000", got.AutoBuyPriceCents)
+	}
+}
+
+func TestExtractDotaItemDetailsWithoutAutoBuyRequests(t *testing.T) {
+	got := extractDotaItemDetails([]byte(`<p>Reflection&#39;s ShadeПризматический самоцвет</p>`))
+	if got.Gem != "Reflection's Shade" {
+		t.Errorf("Gem = %q, want Reflection's Shade", got.Gem)
+	}
+	if got.AutoBuyPriceCents != 0 {
+		t.Errorf("AutoBuyPriceCents = %d, want 0", got.AutoBuyPriceCents)
+	}
+}
+
+func TestBuildDotaListingIncludesAutoBuyPriceValues(t *testing.T) {
+	client := newMarketClient()
+	client.dotaURL = "https://market.dota2.net"
+	client.rates = map[string]float64{"USD": 90, "EUR": 100}
+	client.ratesExpires = time.Now().Add(time.Hour)
+	client.dotaItemDetailsCache = map[string]dotaItemDetails{
+		"123-456": {Gem: "Reflection's Shade", AutoBuyPriceCents: 264941},
+	}
+	listings, err := client.buildDotaListings(t.Context(), []dotaMarketItem{{
+		ClassID: "123", InstanceID: "456", Name: itemHashName, Price: 3000, Page: 1, Index: 0,
+	}})
+	if err != nil {
+		t.Fatalf("buildDotaListings() error = %v", err)
+	}
+	if len(listings) != 1 {
+		t.Fatalf("listings = %d, want 1", len(listings))
+	}
+	if got := listings[0].AutoBuyPriceValues["RUB"]; got != 264941 {
+		t.Errorf("autobuy RUB = %d, want 264941", got)
+	}
+	if got := listings[0].AutoBuyPriceValues["USD"]; got != 2944 {
+		t.Errorf("autobuy USD = %d, want 2944", got)
 	}
 }
 
@@ -434,7 +564,7 @@ func TestDotaMarketClientSupportsHTTP2(t *testing.T) {
 		case strings.HasPrefix(r.URL.Path, "/ajax/"):
 			_, _ = w.Write([]byte(`[[],1]`))
 		case strings.HasPrefix(r.URL.Path, "/item/"):
-			_, _ = w.Write([]byte(`<p>Reflection&#39;s ShadeПризматический самоцвет</p>`))
+			_, _ = w.Write([]byte(`<div class="item-stat"><h3>Запросы на автопокупку</h3><div class="rectanglestat"><b>2 649.41</b><div>1 запрос</div></div></div><p>Reflection&#39;s ShadeПризматический самоцвет</p>`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -449,14 +579,17 @@ func TestDotaMarketClientSupportsHTTP2(t *testing.T) {
 	if _, _, err := client.requestDotaMarketPage(t.Context(), 1); err != nil {
 		t.Fatalf("requestDotaMarketPage() error = %v", err)
 	}
-	gem, err := client.requestDotaGem(t.Context(), dotaMarketItem{
+	details, err := client.requestDotaItemDetails(t.Context(), dotaMarketItem{
 		ClassID: "123", InstanceID: "456", Name: itemHashName,
 	})
 	if err != nil {
-		t.Fatalf("requestDotaGem() error = %v", err)
+		t.Fatalf("requestDotaItemDetails() error = %v", err)
 	}
-	if gem != "Reflection's Shade" {
-		t.Fatalf("gem = %q, want Reflection's Shade", gem)
+	if details.Gem != "Reflection's Shade" {
+		t.Errorf("gem = %q, want Reflection's Shade", details.Gem)
+	}
+	if details.AutoBuyPriceCents != 264941 {
+		t.Errorf("AutoBuyPriceCents = %d, want 264941", details.AutoBuyPriceCents)
 	}
 }
 
